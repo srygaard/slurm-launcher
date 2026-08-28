@@ -1,0 +1,4 @@
+.venv
+slurm/jobs/
+.ruff_cache/
+__pycache__/
