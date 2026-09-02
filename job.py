@@ -17,16 +17,16 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal, NamedTuple, cast, get_args
 
-type Cluster = Literal["mila", "fir", "narval", "nibi", "rorqual", "trillium"]
+type Cluster = Literal["mila", "fir", "narval", "nibi", "rorqual", "trillium", "unknown"]
 
 
-def detect_cluster() -> Cluster | None:
-    cluster = os.environ.get("CC_CLUSTER", "").strip().lower()
+def detect_cluster() -> Cluster:
+    cluster: str = os.environ.get("CC_CLUSTER", "").strip().lower()
     if cluster in get_args(Cluster.__value__):
         return cast(Cluster, cluster)
     if socket.getfqdn().lower().endswith("mila.quebec"):
         return "mila"
-    return None
+    return "unknown"
 
 
 class Ansi(StrEnum):
@@ -82,23 +82,22 @@ def git_commit_hash() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Submit a training job to SLURM.",
+        description="Submit a job to SLURM.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    slurm_dir = Path(__file__).resolve().parent / "slurm"
+    slurm_dir = Path(__file__).parent / "slurm"
     parser.add_argument("-l", "--log-dir", type=Path, default=slurm_dir / "jobs",
-                        help="Directory for job logs")
+                        help="Directory for job logs and script snapshot")
     parser.add_argument("-f", "--template", type=Path, default=None,
-                        help="Path to a .sbatch file, overriding slurm/templates/<cluster>-<config>.sbatch")
+                        help="Path to a template file, overriding slurm/templates/<config>.<cluster>.sh")
     parser.add_argument("-C", "--cluster", default=detect_cluster(),
-                        help="Override the cluster autodetected from the hostname")
+                        help="Override the cluster instead of using the autodetected name")
     parser.add_argument("-c", "--config", default="default",
-                        help="Selects slurm/templates/<cluster>-<config>.sbatch; not "
-                             "necessarily a GPU name -- whatever that file is called")
+                        help="Selects slurm/templates/<config>.<cluster>.sh")
     parser.add_argument("-T", "--time", default="3:00:00",
                         help="The sbatch wall-clock limit (HH:MM:SS)")
     parser.add_argument("-d", "--dependency", type=int, default=None,
-                        help="Hold this job until the given already-submitted job ID finishes")
+                        help="Wait until the specified job ID finishes before starting the job")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the generated script without submitting")
     parser.add_argument("extra_args", nargs=argparse.REMAINDER,
@@ -107,10 +106,10 @@ def parse_args() -> argparse.Namespace:
 
     if args.cluster is None:
         parser.error("Unrecognized cluster. Specify using: --cluster")
-    args.template = args.template or slurm_dir / "templates" / f"{args.cluster}-{args.config}.sbatch"
+    args.template = args.template or slurm_dir / "templates" / f"{args.config}.{args.cluster}.sh"
 
     if not args.template.is_file():
-        parser.error(f"SBATCH template not found: {args.template}")
+        parser.error(f"Template not found: {args.template}")
     args.extra_args = args.extra_args[1:] if args.extra_args[:1] == ["--"] else args.extra_args
     return args
 
@@ -152,7 +151,8 @@ def main(args: argparse.Namespace) -> int:
 
     # Store the job script for reproducability
     meta = f"# git {git_commit_hash()}\n# argv: {shlex.join(sys.argv)}\n"
-    (args.log_dir / f"{result.job_id}-job.sh").write_text(f"{script}\n{meta}")
+    job_script_snapshot = args.log_dir / f"{result.job_id}-job.sh"
+    job_script_snapshot.write_text(f"{script}\n{meta}")
 
     print(f"Job {Ansi.PURPLE}{result.job_id}{Ansi.RESET} requested on {args.cluster}/{args.config}")
     return 0
