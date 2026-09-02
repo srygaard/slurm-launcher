@@ -45,8 +45,13 @@ class SbatchResult(NamedTuple):
 
 def sbatch(script: str) -> SbatchResult:
     """Submit a job script to SLURM."""
-    result = subprocess.run(["sbatch", "--parsable"], input=script,
-                            capture_output=True, text=True)
+    try:
+        result = subprocess.run(["sbatch", "--parsable"], input=script, capture_output=True, text=True)
+    except FileNotFoundError:
+        return SbatchResult(stdout="",
+                            stderr="Must be run on a Slurm (sbatch not found).",
+                            job_id=None,
+                            returncode=127)
     try:
         job_id = int(result.stdout.split(";")[0])
     except ValueError:
@@ -64,12 +69,15 @@ def git_commit_hash() -> str:
     'unknown'
     """
     def stdout(*cmd: str) -> str:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+        except FileNotFoundError:
+            return ""
         return result.stdout.strip() if result.returncode == 0 else ""
 
-    if not (sha := stdout("git", "rev-parse", "--short", "HEAD")):
+    if not (sha_short := stdout("git", "rev-parse", "--short", "HEAD")):
         return "unknown"
-    return sha + ("-dirty" if stdout("git", "status", "--porcelain") else "")
+    return sha_short + ("-dirty" if stdout("git", "status", "--porcelain") else "")
 
 
 def parse_args() -> argparse.Namespace:
